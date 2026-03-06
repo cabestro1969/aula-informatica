@@ -48,15 +48,22 @@ const fmtMonth = d => d.toLocaleDateString("es-ES",{month:"long",year:"numeric"}
 const initials = n => n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
 const uid      = () => Math.random().toString(36).slice(2)+Date.now().toString(36);
 
-// Blocked key = "2026-03-10_2"  (date_slotIndex)
-const blockedKey = (date, slotIdx) => `${date}_${slotIdx}`;
+// Blocked key = "dayOfWeek_slotIdx"  e.g. "1_3" = Martes sesión 4
+// dayOfWeek: 1=Lun … 5=Vie  → same slot is blocked every week on that day
+const blockedKey = (date, slotIdx) => {
+  if(date==="") return `${slotIdx}`; // legacy fallback (never used in grid)
+  const dow = new Date(date+"T00:00:00").getDay(); // 1..5
+  return `${dow}_${slotIdx}`;
+};
+// For the panel (no date needed): key by dayIndex 0..4 and slotIdx
+const panelKey = (dayIdx, slotIdx) => `${dayIdx+1}_${slotIdx}`;
 
 /* ─────────────────────────────────────────────────────────────────────────────
    STORAGE  (localStorage — Vercel compatible)
 ───────────────────────────────────────────────────────────────────────────── */
 const LS_RES     = "aula_reservas_v4";
 const LS_AUTH    = "aula_admin_v4";
-const LS_BLOCKED = "aula_blocked_v4";  // { "date_slotIdx": true }
+const LS_BLOCKED = "aula_blocked_v6";  // { "dow_slotIdx": true } — permanent per weekday+session
 
 function loadRes()     { try { return JSON.parse(localStorage.getItem(LS_RES)||"[]"); }     catch { return []; } }
 function saveRes(r)    { try { localStorage.setItem(LS_RES,JSON.stringify(r)); }             catch {} }
@@ -255,10 +262,6 @@ function AdminPanel({reservations,blocked,weekStart,onUnlock,onDelete,onToggleBl
   const [q,setQ]         =useState("");
   const [confirm,setConf]=useState(null);
 
-  // For the block tab: navigate weeks independently
-  const [blockWeek,setBlockWeek]=useState(()=>getMonday(weekStart));
-  const blockDays=Array.from({length:5},(_,i)=>addDays(blockWeek,i));
-
   const rows=reservations
     .filter(r=>{
       if(!q) return true;
@@ -352,84 +355,56 @@ function AdminPanel({reservations,blocked,weekStart,onUnlock,onDelete,onToggleBl
 
           {/* ── TAB BLOQUEOS ── */}
           {tab==="bloqueos"&&<>
-            {/* info banner */}
-            <div style={{background:"#1e1b2e",border:"1px solid #4c1d95",borderRadius:10,
-              padding:"10px 14px",marginBottom:16,fontSize:12,color:"#c4b5fd",lineHeight:1.5}}>
-              🔒 Haz click en cualquier hueco para <strong>bloquearlo o desbloquearlo</strong> de forma individual.
-              Los huecos bloqueados no pueden reservarse en ninguna semana.
+            <div style={{background:"#1e2535",border:"1px solid #2d3f5a",borderRadius:10,
+              padding:"10px 14px",marginBottom:16,fontSize:12,color:"#94a3b8",lineHeight:1.6}}>
+              🔒 Pulsa cualquiera de los <strong>35 huecos</strong> para bloquearlo o desbloquearlo de forma independiente.
+              Un hueco bloqueado <strong>no puede reservarse en ninguna semana</strong>.
             </div>
 
-            {/* week nav for block tab */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-              <div style={{color:"#94a3b8",fontSize:13,fontWeight:600}}>
-                {fmtDay(blockDays[0])} — {fmtDay(blockDays[4])}
-                <span style={{color:"#475569",fontWeight:400,marginLeft:8,textTransform:"capitalize",fontSize:12}}>
-                  {fmtMonth(blockDays[0])}
-                </span>
-              </div>
-              <div style={{display:"flex",gap:6}}>
-                <button onClick={()=>setBlockWeek(w=>addDays(w,-7))}
-                  style={{width:32,height:32,borderRadius:8,background:"#1e2535",border:"1px solid #334155",
-                    color:"#a5b4fc",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
-                <button onClick={()=>setBlockWeek(getMonday(new Date()))}
-                  style={{padding:"0 12px",height:32,borderRadius:8,background:"#1e2535",border:"1px solid #334155",
-                    color:"#94a3b8",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Hoy</button>
-                <button onClick={()=>setBlockWeek(w=>addDays(w,7))}
-                  style={{width:32,height:32,borderRadius:8,background:"#1e2535",border:"1px solid #334155",
-                    color:"#a5b4fc",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
-              </div>
-            </div>
-
-            {/* block grid — same layout as main calendar */}
+            {/* 5×7 grid: columns = days, rows = slots */}
             <div style={{overflowX:"auto"}}>
-              <div style={{minWidth:480}}>
+              <div style={{minWidth:420}}>
                 {/* day headers */}
                 <div style={{display:"grid",gridTemplateColumns:"44px repeat(5,1fr)",gap:4,marginBottom:4}}>
                   <div/>
-                  {blockDays.map((d,i)=>{
-                    const isToday=toISO(d)===toISO(new Date());
-                    return (
-                      <div key={i} style={{textAlign:"center",padding:"6px 2px",borderRadius:8,
-                        background:isToday?"#1e1b2e":"#1a2235",
-                        border:isToday?"1px solid #4f46e5":"1px solid #1e2d45"}}>
-                        <div style={{color:isToday?"#a5b4fc":"#475569",fontSize:9,fontWeight:700,letterSpacing:"0.06em"}}>{DAYS_SHORT[i]}</div>
-                        <div style={{color:isToday?"#c4b5fd":"#64748b",fontSize:17,fontWeight:800,fontFamily:"'Syne',sans-serif",lineHeight:1.1}}>{d.getDate()}</div>
-                      </div>
-                    );
-                  })}
+                  {DAYS_SHORT.map((d,i)=>(
+                    <div key={i} style={{textAlign:"center",padding:"6px 4px",borderRadius:8,
+                      background:"#1a2535",border:"1px solid #2d3f5a"}}>
+                      <div style={{color:"#64748b",fontSize:10,fontWeight:700,letterSpacing:"0.07em"}}>{d}</div>
+                    </div>
+                  ))}
                 </div>
 
                 {/* slot rows */}
                 {SLOTS.map(slot=>(
                   <div key={slot.index} style={{display:"grid",gridTemplateColumns:"44px repeat(5,1fr)",gap:4,marginBottom:4}}>
-                    {/* label */}
-                    <div style={{display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"flex-end",paddingRight:6}}>
+                    {/* time label */}
+                    <div style={{display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"flex-end",paddingRight:8}}>
                       <div style={{color:"#6366f1",fontSize:15,fontWeight:800,fontFamily:"'Syne',sans-serif",lineHeight:1}}>{slot.index+1}</div>
-                      <div style={{color:"#1e2d45",fontSize:8,marginTop:1}}>{slot.start}</div>
+                      <div style={{color:"#2d3f5a",fontSize:8,marginTop:1}}>{slot.start}</div>
                     </div>
-                    {/* cells */}
-                    {blockDays.map((d,di)=>{
-                      const k=blockedKey(toISO(d),slot.index);
+                    {/* one cell per day */}
+                    {DAYS_SHORT.map((_d,dayIdx)=>{
+                      const k=panelKey(dayIdx,slot.index);
                       const isBlocked=!!blocked[k];
-                      const hasRes=!!reservations.find(r=>r.date===toISO(d)&&r.slotIndex===slot.index);
                       return (
-                        <button key={di} onClick={()=>onToggleBlock(toISO(d),slot.index)}
-                          title={isBlocked?"Bloqueado — click para desbloquear":"Libre — click para bloquear"}
+                        <button key={dayIdx} onClick={()=>onToggleBlock(dayIdx,slot.index)}
+                          title={isBlocked?"Bloqueado — pulsa para desbloquear":"Libre — pulsa para bloquear"}
                           style={{
-                            borderRadius:8,padding:"6px 4px",minHeight:56,cursor:"pointer",
-                            background:isBlocked?"#1e1b2e":hasRes?"#1a2235":"#1a2235",
-                            border:isBlocked?"2px solid #7c3aed":"1px solid #1e2d45",
-                            transition:"all .15s",outline:"none",
+                            borderRadius:8,minHeight:52,cursor:"pointer",border:"none",
+                            background:isBlocked?"#2a1a3e":"#1a2535",
+                            outline:isBlocked?"2px solid #7c3aed":"1px solid #2d3f5a",
+                            outlineOffset:isBlocked?"-1px":"0",
+                            boxShadow:isBlocked?"0 0 10px rgba(124,58,237,.3)":"none",
+                            transition:"all .15s",
                             display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
-                            boxShadow:isBlocked?"0 0 12px rgba(124,58,237,.25)":"none",
                           }}
-                          onMouseEnter={e=>{if(!isBlocked)e.currentTarget.style.background="#26304a";}}
-                          onMouseLeave={e=>{e.currentTarget.style.background=isBlocked?"#1e1b2e":"#1a2235";}}
+                          onMouseEnter={e=>{ e.currentTarget.style.background=isBlocked?"#341f52":"#1e2d45"; }}
+                          onMouseLeave={e=>{ e.currentTarget.style.background=isBlocked?"#2a1a3e":"#1a2535"; }}
                         >
                           {isBlocked
-                            ?<><div style={{fontSize:14}}>🔒</div><div style={{color:"#a78bfa",fontSize:8,fontWeight:700}}>BLOQ.</div></>
-                            :<><div style={{color:hasRes?"#334155":"#1e3a5f",fontSize:14}}>{hasRes?"👤":"○"}</div>
-                               <div style={{color:"#334155",fontSize:8}}>{hasRes?"Ocup.":"Libre"}</div></>
+                            ? <><span style={{fontSize:14}}>🔒</span><span style={{color:"#a78bfa",fontSize:8,fontWeight:700}}>BLOQ.</span></>
+                            : <span style={{color:"#2d3f5a",fontSize:16}}>○</span>
                           }
                         </button>
                       );
@@ -440,10 +415,11 @@ function AdminPanel({reservations,blocked,weekStart,onUnlock,onDelete,onToggleBl
             </div>
 
             {totalBlocked>0&&(
-              <div style={{marginTop:14,padding:"10px 14px",background:"#1e1b2e",borderRadius:10,
-                border:"1px solid #4c1d95",fontSize:12,color:"#a78bfa",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                <span>🔒 {totalBlocked} hueco{totalBlocked!==1?"s":""} bloqueado{totalBlocked!==1?"s":""} en total</span>
-                <button onClick={()=>{saveBlocked({});onToggleBlock("__clear__",0);}}
+              <div style={{marginTop:14,padding:"9px 14px",background:"#1e1b2e",borderRadius:10,
+                border:"1px solid #4c1d95",fontSize:12,color:"#a78bfa",
+                display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span>🔒 {totalBlocked} hueco{totalBlocked!==1?"s":""} bloqueado{totalBlocked!==1?"s":""} permanentemente</span>
+                <button onClick={()=>onToggleBlock("__clear__",-1)}
                   style={{marginLeft:"auto",padding:"4px 12px",borderRadius:7,background:"transparent",
                     border:"1px solid #7c3aed",color:"#c4b5fd",fontSize:11,fontWeight:600,cursor:"pointer",
                     fontFamily:"'DM Sans',sans-serif"}}>
@@ -493,7 +469,7 @@ function SlotCell({slot,res,isBlocked,dayIdx,onBook}) {
   } else if(res){
     bg=`linear-gradient(140deg,${c1},${c2})`; border=`1px solid ${accent}55`; cursor="default";
   } else {
-    bg=hov?"#1e2d45":"#16213a"; border=hov?"1px solid #4f46e5":"1px solid #1e2d45"; cursor="pointer";
+    bg=hov?"#243352":"#1e2d45"; border=hov?"1px solid #4f46e5":"1px solid #2d3f5a"; cursor="pointer";
   }
 
   return (
@@ -639,23 +615,21 @@ export default function App() {
     saveRes(u);setReservations(u);toast("Reserva eliminada");
   }
 
-  // Toggle individual cell block by date+slotIndex
-  // Special case: "__clear__" resets everything
-  function handleToggleBlock(date,slotIdx) {
-    if(date==="__clear__"){
-      const empty={};
-      saveBlocked(empty);setBlocked(empty);
+  // dayIdx: 0..4 (Mon..Fri) or "__clear__" to reset all
+  function handleToggleBlock(dayIdx, slotIdx) {
+    if(dayIdx==="__clear__"){
+      saveBlocked({});setBlocked({});
       toast("Todos los huecos desbloqueados");
       return;
     }
-    const k=blockedKey(date,slotIdx);
+    const k=panelKey(dayIdx,slotIdx);
     const updated={...loadBlocked()};
     if(updated[k]){
       delete updated[k];
-      toast(`Sesión ${slotIdx+1} del ${date} desbloqueada`);
+      toast(`${DAYS_SHORT[dayIdx]} · Sesión ${slotIdx+1} desbloqueada`);
     } else {
       updated[k]=true;
-      toast(`Sesión ${slotIdx+1} del ${date} bloqueada`);
+      toast(`${DAYS_SHORT[dayIdx]} · Sesión ${slotIdx+1} bloqueada en todas las semanas`);
     }
     saveBlocked(updated);setBlocked(updated);
   }
@@ -677,10 +651,10 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-        html,body{min-height:100%;background:#0b1120;color:#f1f5f9;font-family:'DM Sans',sans-serif;}
+        html,body{min-height:100%;background:#131e30;color:#f1f5f9;font-family:'DM Sans',sans-serif;}
         ::-webkit-scrollbar{width:5px;height:5px;}
-        ::-webkit-scrollbar-track{background:#0f1623;}
-        ::-webkit-scrollbar-thumb{background:#1e2d45;border-radius:3px;}
+        ::-webkit-scrollbar-track{background:#192236;}
+        ::-webkit-scrollbar-thumb{background:#2d3f5a;border-radius:3px;}
         button:focus-visible{outline:2px solid #6366f1;outline-offset:2px;}
         @keyframes popIn{from{opacity:0;transform:scale(.94) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
         @keyframes toastIn{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}
@@ -700,7 +674,7 @@ export default function App() {
 
         {/* ══ HEADER ══ */}
         <header style={{position:"sticky",top:0,zIndex:200,
-          borderBottom:"1px solid #1e2d45",background:"rgba(11,17,32,.94)",
+          borderBottom:"1px solid #2d3f5a",background:"rgba(22,32,52,.96)",
           backdropFilter:"blur(14px)",padding:"0 20px",height:60,
           display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
 
@@ -710,7 +684,7 @@ export default function App() {
               display:"flex",alignItems:"center",justifyContent:"center",
               fontSize:19,boxShadow:"0 4px 14px rgba(99,102,241,.35)"}}>🖥️</div>
             <div>
-              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:15,color:"#f1f5f9",lineHeight:1.2}}>Aula Informática</div>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:15,color:"#f1f5f9",lineHeight:1.2}}>Aula de Informática I</div>
               <div style={{fontSize:10,color:"#475569",lineHeight:1}}>IES Comuneros de Castilla</div>
             </div>
           </div>
@@ -737,9 +711,9 @@ export default function App() {
         <main style={{maxWidth:1120,margin:"0 auto",padding:"18px 14px 56px"}}>
 
           {/* ── WEEK NAV ── */}
-          <div style={{background:"#0f1623",border:"1px solid #1e2d45",borderRadius:16,
+          <div style={{background:"#192236",border:"1px solid #2d3f5a",borderRadius:16,
             padding:"16px 18px 13px",marginBottom:12,
-            boxShadow:"0 2px 12px rgba(0,0,0,.3)",animation:"fadeUp .3s ease"}}>
+            boxShadow:"0 2px 12px rgba(0,0,0,.25)",animation:"fadeUp .3s ease"}}>
 
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
               gap:12,marginBottom:13,flexWrap:"wrap"}}>
@@ -785,8 +759,8 @@ export default function App() {
           </div>
 
           {/* ── CALENDAR ── */}
-          <div style={{background:"#0f1623",border:"1px solid #1e2d45",borderRadius:16,
-            padding:"14px",overflowX:"auto",boxShadow:"0 2px 12px rgba(0,0,0,.3)",animation:"fadeUp .35s ease"}}>
+          <div style={{background:"#192236",border:"1px solid #2d3f5a",borderRadius:16,
+            padding:"14px",overflowX:"auto",boxShadow:"0 2px 12px rgba(0,0,0,.25)",animation:"fadeUp .35s ease"}}>
             <div style={{minWidth:520}}>
 
               {/* day headers */}
@@ -797,8 +771,8 @@ export default function App() {
                   const cnt=reservations.filter(r=>r.date===toISO(d)).length;
                   return (
                     <div key={i} style={{textAlign:"center",padding:"7px 3px",borderRadius:9,
-                      background:isToday?"#1e1b2e":"#131929",
-                      border:isToday?"1px solid #4f46e5":"1px solid #1e2d45"}}>
+                      background:isToday?"#1e1b2e":"#1e2d45",
+                      border:isToday?"1px solid #4f46e5":"1px solid #2d3f5a"}}>
                       <div style={{color:isToday?"#a5b4fc":"#334155",fontSize:10,fontWeight:700,letterSpacing:"0.07em"}}>{DAYS_SHORT[i]}</div>
                       <div style={{color:isToday?"#c4b5fd":"#64748b",fontSize:20,fontWeight:800,
                         fontFamily:"'Syne',sans-serif",lineHeight:1.1}}>{d.getDate()}</div>
@@ -833,7 +807,7 @@ export default function App() {
           {/* legend */}
           <div style={{display:"flex",gap:18,marginTop:11,flexWrap:"wrap"}}>
             {[
-              {bg:"#16213a",bd:"#1e2d45",          label:"Libre — click para reservar"},
+              {bg:"#1e2d45",bd:"#2d3f5a",          label:"Libre — click para reservar"},
               {bg:"linear-gradient(140deg,#bfdbfe,#93c5fd)",bd:"#3b82f655",label:"Ocupado"},
               {bg:BLOCKED_BG,bd:BLOCKED_BORDER,    label:"Bloqueado por admin"},
             ].map(({bg,bd,label})=>(
@@ -863,6 +837,7 @@ export default function App() {
     </>
   );
 }
+
 
 
 

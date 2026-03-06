@@ -45,18 +45,28 @@ function getMonday(d) {
   return dt;
 }
 const addDays  = (d,n) => { const dt=new Date(d); dt.setDate(dt.getDate()+n); return dt; };
-const toISO    = d => d.toISOString().split("T")[0];
+// Use local date parts to avoid UTC timezone shift (e.g. UTC+1/+2 in Spain)
+const toISO = d => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+};
 const fmtDay   = d => d.toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"});
 const fmtMonth = d => d.toLocaleDateString("es-ES",{month:"long",year:"numeric"});
 const initials = n => n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
 const uid      = () => Math.random().toString(36).slice(2)+Date.now().toString(36);
 
-// blocked key: dayOfWeek_slotIdx (1=Lun…5=Vie) — permanent across all weeks
-const blockedKey = (date,slotIdx) => {
-  const dow=new Date(date+"T00:00:00").getDay();
+// blocked key: dayOfWeek_slotIdx — uses local date to avoid UTC timezone shift
+// panelKey: dayIdx 0=Lun…4=Vie maps to dow 1…5
+const blockedKey = (date, slotIdx) => {
+  // date is "YYYY-MM-DD" — parse as local midnight to get correct day-of-week
+  const [y,m,d] = date.split("-").map(Number);
+  const dow = new Date(y, m-1, d).getDay(); // local: 0=Sun,1=Mon…6=Sat
   return `${dow}_${slotIdx}`;
 };
-const panelKey = (dayIdx,slotIdx) => `${dayIdx+1}_${slotIdx}`;
+const panelKey = (dayIdx, slotIdx) => `${dayIdx+1}_${slotIdx}`;
+// dayIdx 0→dow1(Lun), 1→dow2(Mar), 2→dow3(Mié), 3→dow4(Jue), 4→dow5(Vie)
 
 /* ─────────────────────────────────────────────────────────────────────────────
    STORAGE  — each aula gets its own localStorage prefix
@@ -869,6 +879,7 @@ export default function App() {
     </>
   );
 }
+
 
 
 
